@@ -1,0 +1,5 @@
+[
+  { "task": "Set up Arcano Sprint extension", "done": false },
+  { "task": "Test sprint panel UI", "done": false },
+  { "task": "Mark a task as done", "done": false }
+]

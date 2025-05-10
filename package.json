@@ -1,0 +1,99 @@
+{
+  "name": "arcano-sprint-manager",
+  "displayName": "Arcano Sprint Manager",
+  "description": "Manage ArcanoFlow sprints and assist Copilot from within VS Code",
+  "version": "1.0.0",
+  "main": "./out/extension.js",
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "extensionDependencies": [
+    "GitHub.copilot",
+    "GitHub.copilot-chat"
+  ],
+  "extensionKind": ["workspace"],
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "arcano.startSprint",
+        "title": "Start Arcano Sprint"
+      },
+      {
+        "command": "arcano.markTaskDone",
+        "title": "Mark Task as Done"
+      },
+      {
+        "command": "arcano.showProgress",
+        "title": "Show Sprint Progress"
+      },
+      {
+        "command": "arcano.showDebugOutput",
+        "title": "Show Debug Output",
+        "category": "Arcano"
+      },
+      {
+        "command": "arcano.showCopilot",
+        "title": "Open Copilot Chat",
+        "category": "Arcano"
+      },
+      {
+        "command": "arcano.sendToCopilot",
+        "title": "Send Task to Copilot Chat",
+        "category": "Arcano"
+      },
+      {
+        "command": "arcano.copilotAssist",
+        "title": "Get Copilot Implementation Help",
+        "category": "Arcano"
+      }
+    ],
+    "dependencies": {
+      "@types/node": "16.x",
+      "@types/vscode": "^1.75.0",
+      "vscode": "^1.75.0",
+      "@vscode/vsce": "^2.15.0"
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "arcanoViewContainer",
+          "title": "Arcano",
+          "icon": "media/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "arcanoViewContainer": [
+        {
+          "id": "arcanoTaskList",
+          "type": "webview",
+          "name": "Sprint Tasks",
+          "icon": "media/icon.png"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Arcano Sprint Manager",
+      "properties": {
+        "arcano.openOutputOnActivation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to automatically show debug output when the extension activates"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode": "^1.82.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "@types/vscode": "^1.82.0",
+    "typescript": "^4.9.5"
+  }
+}
