@@ -36,4 +36,5 @@ The extension includes automated and manual smoke tests to verify functionality:
 - **Windows**: Run `scripts\run_windows_test.ps1` in PowerShell
 - **macOS**: Run `scripts/run_macos_test.sh` in Terminal
 
-For detailed test procedures, see [Smoke Testing Guide](docs/smoke-testing.md)
+<!-- For detailed test procedures, see [Smoke Testing Guide](docs/smoke-testing.md) -->
+
