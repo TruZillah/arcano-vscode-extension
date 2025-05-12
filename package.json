@@ -5,13 +5,15 @@
   "version": "1.0.0",
   "main": "./out/extension.js",
   "engines": {
-    "vscode": "^1.82.0"
+    "vscode": "^1.81.0"
   },
   "extensionDependencies": [
     "GitHub.copilot",
     "GitHub.copilot-chat"
   ],
-  "extensionKind": ["workspace"],
+  "extensionKind": [
+    "workspace"
+  ],
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
@@ -49,6 +51,36 @@
       {
         "command": "arcano.copilotAssist",
         "title": "Get Copilot Implementation Help",
+        "category": "Arcano"
+      },
+      {
+        "command": "arcano.sendTaskToPlan",
+        "title": "Plan Task with Copilot",
+        "category": "Arcano"
+      },
+      {
+        "command": "arcano.sendTaskToImplement",
+        "title": "Implement Task with Copilot",
+        "category": "Arcano"
+      },
+      {
+        "command": "arcano.startTask",
+        "title": "Start Task with Copilot",
+        "category": "Arcano"
+      },
+      {
+        "command": "arcano.runPanel",
+        "title": "Show Arcano Panel",
+        "category": "Arcano"
+      },
+      {
+        "command": "arcano.copilotHint",
+        "title": "Insert Copilot Hint",
+        "category": "Arcano"
+      },
+      {
+        "command": "arcano.copilotRespond",
+        "title": "Get Response from Copilot",
         "category": "Arcano"
       }
     ],
@@ -89,11 +121,14 @@
     }
   },
   "dependencies": {
-    "vscode": "^1.82.0"
+    "@types/vscode": "^1.81.0",
+    "@vscode/test-electron": "^2.0.0"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^22.15.17",
-    "@types/vscode": "^1.82.0",
+    "@types/vscode": "^1.81.0",
+    "mocha": "^11.2.2",
     "typescript": "^4.9.5"
   }
 }

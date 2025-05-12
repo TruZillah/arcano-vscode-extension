@@ -1,16 +1,26 @@
 import * as vscode from 'vscode';
 import { runSprintManager, listSprintFiles, loadTasksFromFile } from './pythonBridge';
-import { sendKeysToActive } from './windowsInput';
+import { sendKeysToActive, submitActiveInput } from './inputHelper';
+import { Task, Section, SprintItem } from './types';
 
 export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'arcanoTaskList';
   private currentFile: string | null = null;
   private webviewView: vscode.WebviewView | undefined;
+  private sectionTaskMap = new Map<number, Task>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly outputChannel: vscode.OutputChannel
   ) {}
+  
+  /**
+   * Gets the currently selected sprint file
+   * @returns The filename of the current sprint file, or null if none selected
+   */
+  public getCurrentFile(): string | null {
+    return this.currentFile;
+  }
 
   private async fallbackToLanguageModel(task: string) {
     try {
@@ -102,37 +112,18 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
         this.outputChannel.appendLine(`Selected default file: ${this.currentFile}`);
       }
 
-      let tasks = [];
+      let tasks: SprintItem[] = [];
       if (this.currentFile) {
         tasks = await loadTasksFromFile(this.currentFile);
-        this.outputChannel.appendLine(`Loaded ${tasks.length} tasks from ${this.currentFile}`);
+        this.outputChannel.appendLine(`Loaded ${tasks.length} tasks/sections from ${this.currentFile}`);
       }
 
-      const doneCount = tasks.filter((t: any) => t.done).length;
-      const totalCount = tasks.length;
-      
-      const tasksHtml = tasks.map((t: any, i: number) => `
-        <div class="task-item ${t.done ? 'done' : ''}" data-index="${i}">
-            <label class="checkbox-container">
-              <input type="checkbox" class="task-checkbox" ${t.done ? 'checked' : ''}>
-              <span class="checkmark"></span>
-            </label>
-            <span class="task-label">${this.escapeHtml(t.task)}</span>
-            <div class="task-buttons">
-              <button class="task-button start-chatgpt" ${t.done ? 'disabled' : ''}>
-                <span class="button-icon">🎯</span> Plan
-              </button>
-              <button class="task-button start-copilot" ${t.done ? 'disabled' : ''}>
-                <span class="button-icon">💻</span> Code
-              </button>
-            </div>
-          </div>
-      `).join('');
+      // Count tasks that aren't section headers
+      const taskList = tasks.filter(t => t.type === 'task');
+      const doneCount = taskList.filter(t => (t as Task).done).length;
+      const totalCount = taskList.length;
 
-      const html = this.getHtml(fileOptionsHtml, tasksHtml, doneCount, totalCount);
-      this.outputChannel.appendLine('Generated HTML for webview');
-      this.outputChannel.appendLine('HTML length: ' + html.length);
-
+      const html = this.getHtml(fileOptionsHtml, tasks, doneCount, totalCount);
       webviewView.webview.html = html;
     };
 
@@ -141,222 +132,69 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
     // Set up auto-refresh
     const interval = setInterval(refreshPanel, 10000);
     webviewView.onDidDispose(() => {
-      this.outputChannel.appendLine('Panel disposed, clearing interval');
       clearInterval(interval);
     });
 
     // Message handling
     webviewView.webview.onDidReceiveMessage(async (message) => {
       this.outputChannel.appendLine(`Received message: ${JSON.stringify(message)}`);
-      
+
       switch (message.command) {
         case 'selectFile':
           this.currentFile = message.file;
           await refreshPanel();
-          break;        
-        case 'startChatGPT': {
+          break;          
+        
+        case 'startTask': {
           const tasks = await loadTasksFromFile(this.currentFile!);
-          const task = tasks[message.index];
+          // Filter to just tasks (not sections) and find the requested index
+          const taskList = tasks.filter(t => t.type === 'task');
+          const task = taskList[message.index] as Task;
+          
           if (task && !task.done) {
             try {
-              this.outputChannel.appendLine('Opening chat for planning...');
+              this.outputChannel.appendLine(`Starting task: ${task.task}`);
+              const success = await this.openTaskInCopilotChat(task.task);
               
-              // First try language model API
-              try {
-                const [model] = await vscode.lm.selectChatModels({ vendor: 'copilot' });
-                if (model) {
-                  const planPrompt = `Help me plan this sprint task: "${task.task}". Please provide:
-1. Task breakdown into smaller steps
-2. Time estimates for each step
-3. Key considerations and potential challenges
-4. Required resources or dependencies
-5. Success criteria`;
-
-                  const messages = [
-                    vscode.LanguageModelChatMessage.User([new vscode.LanguageModelTextPart(planPrompt)])
-                  ];
-
-                  const response = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
-                  
-                  let fullResponse = '';
-                  for await (const text of response.text) {
-                    fullResponse += text;
-                  }
-                  
-                  await vscode.window.showInformationMessage('Planning Guidance', {
-                    modal: true,
-                    detail: fullResponse
-                  });
-                  return;
-                }
-              } catch (modelErr) {
-                this.outputChannel.appendLine(`Language model failed: ${modelErr}, trying chat commands...`);
+              if (success) {
+                this.outputChannel.appendLine(`Successfully started task: ${task.task}`);
+              } else {
+                this.outputChannel.appendLine(`Failed to start task: ${task.task}`);
+                vscode.window.showInformationMessage('Unable to start task. Please try again.');
               }
-              
-              // Try each chat command in sequence
-              const commands = [
-                'workbench.action.quickChat.open',
-                'chat.open',
-                'workbench.action.chat.focus'
-              ];
-              
-              let success = false;
-              for (const cmd of commands) {
-                try {
-                  this.outputChannel.appendLine(`Trying command: ${cmd}`);
-                  await vscode.commands.executeCommand(cmd);
-                  success = true;
-                  break;
-                } catch (cmdErr) {
-                  this.outputChannel.appendLine(`Command ${cmd} failed: ${cmdErr}`);
-                  continue;
-                }
-              }
-
-              if (!success) {
-                throw new Error('All chat commands failed');
-              }
-
-              // Wait longer for chat to be ready
-              await new Promise(resolve => setTimeout(resolve, 2000));
-              
-              const planPrompt = `Help me plan this sprint task: "${task.task}". Please provide:
-1. Task breakdown into smaller steps
-2. Time estimates for each step
-3. Key considerations and potential challenges
-4. Required resources or dependencies
-5. Success criteria`;
-              
-              await sendKeysToActive(planPrompt);
-              this.outputChannel.appendLine(`Started planning for task: ${task.task}`);
             } catch (err) {
-              this.outputChannel.appendLine(`Error in planning: ${err}`);
-              vscode.window.showErrorMessage('Failed to send to ChatGPT: ' + (err instanceof Error ? err.message : String(err)));
-            }
-          }
-          break;
-        }        
-        case 'startCopilot': {
-          const tasks = await loadTasksFromFile(this.currentFile!);
-          const task = tasks[message.index];
-          if (task && !task.done) {
-            try {
-              this.outputChannel.appendLine('Opening Copilot Chat for implementation...');
-              
-              const message = `/help I need to implement this task: "${task.task}". Please help me with:
-1. Breaking down the implementation steps
-2. Suggesting which files to modify
-3. Providing code examples with best practices
-4. Including error handling
-5. Adding proper documentation`;
-
-              // First try the language model API approach
-              try {
-                const [model] = await vscode.lm.selectChatModels({ vendor: 'copilot' });
-                if (model) {
-                  const response = await model.sendRequest([
-                    vscode.LanguageModelChatMessage.User([new vscode.LanguageModelTextPart(message)])
-                  ], {}, new vscode.CancellationTokenSource().token);
-                  
-                  let fullResponse = '';
-                  for await (const text of response.text) {
-                    fullResponse += text;
-                  }
-                  
-                  await vscode.window.showInformationMessage('Implementation Guidance', {
-                    modal: true,
-                    detail: fullResponse
-                  });
-                  return;
-                }
-              } catch (modelErr) {
-                this.outputChannel.appendLine(`Language model failed: ${modelErr}, trying Copilot Chat...`);
-              }
-
-              // Make sure Copilot Chat extension is ready
-              const copilotExtension = vscode.extensions.getExtension('GitHub.copilot-chat');
-              if (!copilotExtension) {
-                throw new Error('GitHub Copilot Chat extension not found');
-              }
-
-              if (!copilotExtension.isActive) {
-                await copilotExtension.activate();
-              }
-
-              // Try multiple approaches to open and interact with chat
-              const attempts = [
-                {
-                  name: 'Modern Chat API',
-                  action: async () => {
-                    await vscode.commands.executeCommand('workbench.action.chatWith', { provider: 'GitHub.copilot' });
-                  }
-                },
-                {
-                  name: 'Quick Chat',
-                  action: async () => {
-                    await vscode.commands.executeCommand('workbench.action.quickChat.open');
-                  }
-                },
-                {
-                  name: 'Focus Chat',
-                  action: async () => {
-                    await vscode.commands.executeCommand('workbench.action.chat.focus');
-                  }
-                },
-                {
-                  name: 'Legacy Copilot Commands',
-                  action: async () => {
-                    await vscode.commands.executeCommand('github.copilot.chat.focus');
-                  }
-                }
-              ];
-
-              let success = false;
-              for (const attempt of attempts) {
-                try {
-                  this.outputChannel.appendLine(`Trying ${attempt.name}...`);
-                  await attempt.action();
-                  await new Promise(resolve => setTimeout(resolve, 1500)); // Give UI time to respond
-                  await sendKeysToActive(message);
-                  this.outputChannel.appendLine(`Success with ${attempt.name}`);
-                  success = true;
-                  break;
-                } catch (err) {
-                  this.outputChannel.appendLine(`${attempt.name} failed: ${err}`);
-                  continue;
-                }
-              }
-
-              if (!success) {
-                // Try one last approach with direct message sending
-                try {
-                  await vscode.commands.executeCommand('github.copilot.chat.sendMessage', message);
-                  success = true;
-                } catch (err) {
-                  this.outputChannel.appendLine(`Direct message send failed: ${err}`);
-                }
-              }
-
-              if (!success) {
-                throw new Error('All chat approaches failed');
-              }
-
-            } catch (err) {
-              this.outputChannel.appendLine(`Error in implementation: ${err}`);
+              this.outputChannel.appendLine(`Error starting task: ${err}`);
               const errorMsg = err instanceof Error ? err.message : String(err);
-              vscode.window.showErrorMessage(`Failed to send to Copilot chat: ${errorMsg}. Check if GitHub Copilot is properly installed and authenticated.`);
+              vscode.window.showErrorMessage(`Failed to start task: ${errorMsg}`);
             }
           }
           break;
         }
-
-        case 'markDone': {
+        
+        case 'toggleTask': {
           const tasks = await loadTasksFromFile(this.currentFile!);
-          const task = tasks[message.index];
-          if (task && !task.done) {
-            await runSprintManager(['--done', task.task]);
-            await refreshPanel();
-            this.outputChannel.appendLine(`Marked task as done: ${task.task}`);
+          // Filter to just tasks and find the requested index
+          const taskList = tasks.filter(t => t.type === 'task');
+          const task = taskList[message.index] as Task;
+          
+          if (task) {
+            try {
+              const newStatus = !task.done;
+              const success = await this.updateTaskInFile(task.task, newStatus);
+              
+              if (success) {
+                task.done = newStatus;
+                await refreshPanel();
+                const status = newStatus ? 'done' : 'undone';
+                this.outputChannel.appendLine(`Toggled task as ${status}: ${task.task}`);
+              } else {
+                vscode.window.showErrorMessage(`Failed to update task in ${this.currentFile}`);
+              }
+            } catch (err) {
+              this.outputChannel.appendLine(`Error toggling task: ${err}`);
+              const errorMsg = err instanceof Error ? err.message : String(err);
+              vscode.window.showErrorMessage(`Failed to toggle task: ${errorMsg}`);
+            }
           }
           break;
         }
@@ -364,7 +202,7 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private getHtml(fileOptionsHtml: string, tasksHtml: string, done: number, total: number): string {
+  private getHtml(fileOptionsHtml: string, tasks: SprintItem[], done: number, total: number): string {
     const percent = total > 0 ? Math.round((done / total) * 100) : 0;
     return `
       <!DOCTYPE html>
@@ -568,6 +406,101 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
             color: var(--silver-white);
             border: 1px solid var(--electric-blue);
           }
+
+          .section-header {
+            margin: 2em 0 1em;
+            position: relative;
+          }
+
+          .section-header h3 {
+            color: var(--electric-blue);
+            margin: 0;
+            font-size: 1.2em;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            background: var(--dark-bg);
+            display: inline-block;
+            padding-right: 1em;
+            position: relative;
+            z-index: 1;
+          }
+
+          .section-line {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: var(--electric-blue);
+            opacity: 0.3;
+            margin-top: -1px;
+            z-index: 0;
+          }
+
+          /* Add extra spacing after section headers */
+          .section-header + .task-item {
+            margin-top: 1em;
+          }
+
+          /* Indent tasks under sections */
+          .task-item {
+            margin-left: 1em;
+          }
+
+          .task-section {
+            margin: 2em 0;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+          }
+
+          .section-header {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1em;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: background 0.3s ease;
+          }
+
+          .section-header:hover {
+            background: rgba(0, 0, 0, 0.4);
+          }
+
+          .section-header h3 {
+            color: var(--electric-blue);
+            margin: 0;
+            font-size: 1.1em;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+          }
+
+          .section-header .section-count {
+            font-size: 0.8em;
+            color: var(--silver-white);
+            opacity: 0.7;
+            font-weight: normal;
+          }
+
+          .section-content {
+            padding: 0.5em 1em;
+          }
+
+          .section-content .task-item {
+            margin-left: 0;
+            background: rgba(255, 255, 255, 0.03);
+          }
+
+          .section-content .task-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+          }
         </style>
       </head>
       <body>
@@ -588,7 +521,7 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
         </div>
 
         <div class="task-list">
-          ${tasksHtml}
+          ${this.generateSectionedTasksHtml(tasks)}
         </div>
 
         <script>
@@ -606,37 +539,121 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
               const checkbox = item.querySelector('.task-checkbox');
             checkbox.addEventListener('change', () => {
               vscode.postMessage({ 
-                command: 'markDone', 
+                command: 'toggleTask', 
                 index: parseInt(index) 
               });
-            });
+            });            // Task label click now disabled since we have explicit buttons
+            const taskLabel = item.querySelector('.task-label');            taskLabel.style.cursor = 'default';
 
-            // Task label click now disabled since we have explicit buttons
-            const taskLabel = item.querySelector('.task-label');
-            taskLabel.style.cursor = 'default';
-
-            // Plan button opens ChatGPT
-            const planButton = item.querySelector('.start-chatgpt');
-            planButton.addEventListener('click', () => {
+            // Start Task button initiates the task
+            const startTaskButton = item.querySelector('.start-task');
+            startTaskButton.addEventListener('click', () => {
+              // Disable the button while processing to prevent duplicate clicks
+              startTaskButton.disabled = true;
+              startTaskButton.innerText = 'Starting...';
+              
               vscode.postMessage({ 
-                command: 'startChatGPT', 
+                command: 'startTask', 
                 index: parseInt(index) 
               });
+              
+              // Re-enable after a timeout
+              setTimeout(() => {
+                startTaskButton.disabled = false;
+                startTaskButton.innerHTML = '<span class="button-icon">🚀</span> Start Task';
+              }, 5000);
             });
+          });
 
-            // Code button opens Copilot
-            const codeButton = item.querySelector('.start-copilot');
-            codeButton.addEventListener('click', () => {
-              vscode.postMessage({ 
-                command: 'startCopilot', 
-                index: parseInt(index) 
-              });
+          // Function to toggle task completion status
+          function toggleTask(index) {
+            vscode.postMessage({
+              command: 'toggleTask',
+              index: index
+            });
+          }
+
+          // Add section toggle functionality
+          document.querySelectorAll('.section-header').forEach(header => {
+            header.addEventListener('click', () => {
+              const section = header.parentElement;
+              const content = section.querySelector('.section-content');
+              if (content.style.display === 'none') {
+                content.style.display = 'block';
+                header.querySelector('.section-icon').textContent = '📂';
+              } else {
+                content.style.display = 'none';
+                header.querySelector('.section-icon').textContent = '📁';
+              }
             });
           });
         </script>
       </body>
       </html>
     `;
+  }
+
+  private generateSectionedTasksHtml(tasks: SprintItem[]): string {
+    let currentSection = '';
+    let html = '';
+    let taskIndex = 0;
+    const self = this;
+
+    // Helper function to render an individual task
+    function renderTask(task: Task, index: number): string {
+      return `
+        <div class="task-item ${task.done ? 'done' : ''}" data-index="${index}">
+          <label class="checkbox-container">
+            <input type="checkbox" class="task-checkbox" ${task.done ? 'checked' : ''} onchange="toggleTask(${index})">
+            <span class="checkmark"></span>
+          </label>
+          <span class="task-label">${self.escapeHtml(task.task)}</span>
+          <div class="task-buttons">
+            <button class="task-button start-task" ${task.done ? 'disabled' : ''}>
+              <span class="button-icon">🚀</span> Start Task
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    for (const item of tasks) {
+      if (item.type === 'section') {
+        // If we had tasks in the previous section, close it
+        if (currentSection) {
+          html += '</div></div>';
+        }
+        
+        // Start new section
+        const sectionTasks = tasks.filter(t => 
+          t.type === 'task' && (t as Task).section === item.name
+        ) as Task[];
+        const doneCount = sectionTasks.filter(t => t.done).length;
+        
+        html += `
+          <div class="task-section">
+            <div class="section-header">
+              <h3>
+                <span class="section-icon">📂</span>
+                ${self.escapeHtml(item.name)}
+              </h3>
+              <span class="section-count">${doneCount}/${sectionTasks.length}</span>
+            </div>
+            <div class="section-content">
+        `;
+        currentSection = item.name;
+      } else if (item.type === 'task') {
+        // Render task with current index
+        html += renderTask(item as Task, taskIndex++);
+      }
+    }
+
+    // Close last section if needed
+    if (currentSection) {
+      html += '</div></div>';
+    }
+
+    return html;
   }
 
   private escapeHtml(str: string): string {
@@ -649,5 +666,88 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
         "'": '&#39;'
       }[m] || '')
     );
+  }
+
+  // Internal function to send keyboard input to the active editor or input box  // Using the imported functions from inputHelper.ts for text insertion and submission
+  /**
+   * This method exists for backwards compatibility.
+   * It now delegates to the extension commands for better reliability.
+   */
+  private async openCopilotChatAndInsertText(task: string, shouldSubmit: boolean = false): Promise<boolean> {
+    try {
+      this.outputChannel.appendLine(`Delegating to extension command for task: ${task}`);
+      
+      // Call the appropriate command based on whether we're planning or implementing
+      if (shouldSubmit) {
+        return await vscode.commands.executeCommand('arcano.sendTaskToImplement', task);
+      } else {
+        return await vscode.commands.executeCommand('arcano.sendTaskToPlan', task);
+      }    } catch (err) {
+      this.outputChannel.appendLine(`Error in openCopilotChatAndInsertText: ${err}`);
+      
+      // Show simple error message and return false to indicate failure
+      const title = shouldSubmit ? 'Code Implementation' : 'Planning';
+      vscode.window.showErrorMessage(`Failed to send task for ${title}. Please try again or check the Copilot Chat extension.`);
+      return false;
+    }
+  }
+
+  /**
+   * Updates a task's status in the current markdown file
+   */
+  private async updateTaskInFile(taskText: string, newStatus: boolean): Promise<boolean> {
+    if (!this.currentFile) return false;
+
+    // Get workspace folder
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) return false;
+    
+    const filePath = vscode.Uri.joinPath(workspaceFolders[0].uri, 'docs', this.currentFile);
+    
+    try {
+      // Read and parse the file
+      const document = await vscode.workspace.openTextDocument(filePath);
+      const edit = new vscode.WorkspaceEdit();
+      
+      // Search for the task line
+      for (let i = 0; i < document.lineCount; i++) {
+        const line = document.lineAt(i);
+        const lineText = line.text;
+        
+        // Look for the exact task with any indentation
+        if (lineText.includes(`] ${taskText}`) && 
+            (lineText.includes('[ ]') || lineText.includes('[x]'))) {
+          
+          // Extract indentation
+          const indentation = lineText.match(/^\s*/)?.[0] || '';
+          
+          // Create new line with updated checkbox
+          const newText = `${indentation}- [${newStatus ? 'x' : ' '}] ${taskText}`;
+          
+          // Replace the entire line
+          edit.replace(document.uri, line.range, newText);
+          
+          // Apply the edit
+          const success = await vscode.workspace.applyEdit(edit);
+          if (success) {
+            await document.save();
+            this.outputChannel.appendLine(`Updated task in ${this.currentFile}`);
+            return true;
+          }
+          break;
+        }
+      }
+      return false;
+    } catch (err) {
+      this.outputChannel.appendLine(`Error updating task: ${err}`);
+      return false;
+    }
+  }
+
+  /**
+   * Escape special regex characters in a string
+   */
+  private escapeRegExp(string: string): string {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 }

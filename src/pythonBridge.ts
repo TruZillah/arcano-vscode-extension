@@ -2,6 +2,14 @@ import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import * as path from 'path';
 
+// Store the extension context for accessing resources
+let extensionContext: vscode.ExtensionContext;
+
+// Set the context when the extension activates
+export function setExtensionContext(context: vscode.ExtensionContext) {
+  extensionContext = context;
+}
+
 /**
  * Runs the sprint_manager.py script with the given arguments and returns stdout as a string.
  * Shows errors in VS Code if the script fails.
@@ -14,13 +22,20 @@ export async function runSprintManager(args: string[]): Promise<string> {
     // Get the workspace root for cwd
     const workspaceFolders = vscode.workspace.workspaceFolders;
     const cwd = workspaceFolders && workspaceFolders.length > 0 ? workspaceFolders[0].uri.fsPath : process.cwd();
+    
     function tryNext() {
       if (tried >= pythonCandidates.length) {
         vscode.window.showErrorMessage('No Python interpreter found (tried py, python, python3). Please install Python and add it to your PATH.');
         return reject(new Error('No Python interpreter found.'));
       }
+      
       const pythonPath = pythonCandidates[tried++];
-      const scriptPath = path.join(__dirname, '../scripts/sprint_manager.py');
+      
+      // Use context to get the absolute path to the script
+      const scriptPath = extensionContext ? 
+        extensionContext.asAbsolutePath('scripts/sprint_manager.py') : 
+        path.join(__dirname, '../scripts/sprint_manager.py');
+        
       const proc = spawn(pythonPath, [scriptPath, ...args], { cwd });
       let stdout = '';
       let stderr = '';

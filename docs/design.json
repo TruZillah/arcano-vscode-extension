@@ -1,0 +1,31 @@
+{
+  "agentInstructions": {
+    "general": "You are a coding assistant for the Arcano Sprint Manager VS Code extension. Your task is to help users implement the tasks in their sprint backlog.",
+    "taskFormat": "When given a task, break it down into steps, explain your implementation approach, and provide code examples."
+  },
+  "uiPreferences": {
+    "buttons": {
+      "style": {
+        "background": "#00c3ff",
+        "color": "#0f2027",
+        "padding": "6px 12px",
+        "borderRadius": "4px",
+        "fontWeight": "600"
+      },
+      "icons": {
+        "startTask": "🚀",
+        "done": "✓"
+      }
+    },
+    "colors": {
+      "electricBlue": "#00c3ff",
+      "silverWhite": "#e3eafc",
+      "darkBg": "#0f2027",
+      "blueGlow": "#00c3ff44"
+    }
+  },
+  "prompts": {
+    "taskStart": "I'm working on this task from my sprint backlog: \"{task}\". Please help me implement it with detailed code examples and best practices.",
+    "contextFormat": "Here's the context from my sprint backlog:\n\n{sprintContext}\n\nHere are our design guidelines:\n\n{designContext}"
+  }
+}

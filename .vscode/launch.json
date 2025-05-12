@@ -13,6 +13,19 @@
           "${workspaceFolder}/out/**/*.js"
         ],
         "preLaunchTask": "npm: vscode:prepublish"
+      },      {
+        "name": "Run Arcano Smoke Test",
+        "type": "extensionHost",
+        "request": "launch",
+        "runtimeExecutable": "${execPath}",
+        "args": [
+          "--extensionDevelopmentPath=${workspaceFolder}",
+          "--extensionTestsPath=${workspaceFolder}/scripts/test-main.js"
+        ],
+        "outFiles": [
+          "${workspaceFolder}/out/**/*.js"
+        ],
+        "preLaunchTask": "npm: vscode:prepublish"
       }
     ]
   }

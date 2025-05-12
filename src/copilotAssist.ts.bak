@@ -1,0 +1,178 @@
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import { sendKeysToActive, submitActiveInput } from './inputHelper';
+
+/**
+ * Sends a task to GitHub Copilot Chat for assistance with implementation.
+ */
+export async function insertCopilotHint(taskLabel: string) {
+  try {
+    // First, create or show an untitled file to host our conversation
+    const document = await vscode.workspace.openTextDocument({ 
+      content: '',
+      language: 'markdown' 
+    });
+    const editor = await vscode.window.showTextDocument(document);
+
+    // Insert our task description
+    await editor.edit((editBuilder: vscode.TextEditorEdit) => {
+      const text = `# Implementation Task: ${taskLabel}
+
+I need help implementing this feature:
+- Task: ${taskLabel}
+- Priority: High
+- Guidelines: 
+  - Follow best practices
+  - Include error handling
+  - Add proper documentation
+  - Consider scalability
+
+Please provide step-by-step guidance on how to implement this feature.`;
+      
+      editBuilder.insert(new vscode.Position(0, 0), text);
+    });
+
+    // Move cursor to the end of our text
+    const position = new vscode.Position(editor.document.lineCount, 0);
+    editor.selection = new vscode.Selection(position, position);
+
+    // Trigger inline chat
+    await vscode.commands.executeCommand('inlineChat.start');
+  } catch (err) {
+    vscode.window.showErrorMessage('Failed to start chat: ' + (err instanceof Error ? err.message : String(err)));
+  }
+}
+
+/**
+ * Replies to a detected Copilot suggestion prompt by injecting text automatically.
+ * Currently simulated via snippet insertion — later can hook into Copilot CLI or API.
+ */
+export async function replyToCopilotFollowUp(reply: string) {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
+
+  await editor.insertSnippet(new vscode.SnippetString(reply));
+  vscode.window.showInformationMessage('💬 Replied to Copilot suggestion.');
+}
+
+/**
+ * Generate automated responses to Copilot questions based on task context
+ */
+export async function respondToCopilot(context: { question: string, task: string }) {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
+
+  const response = generateContextualResponse(context.question, context.task);
+  if (!response) return;
+
+  // Insert response below the question
+  const position = editor.selection.active;
+  await editor.edit(editBuilder => {
+    editBuilder.insert(position, `\n// ${response}\n`);
+  });
+
+  // Trigger new suggestion
+  await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+}
+
+/**
+ * Generate contextual responses to common Copilot questions
+ */
+function generateContextualResponse(question: string, taskContext: string): string | null {
+  // Normalize question for matching
+  const q = question.toLowerCase();
+  
+  // File creation questions
+  if (q.includes('create') && q.includes('file')) {
+    return 'Yes, please create any necessary files following the project structure.';
+  }
+
+  // Framework/library questions
+  if (q.includes('use') && (q.includes('framework') || q.includes('library'))) {
+    return 'Yes, use modern and well-maintained libraries that best fit the task requirements.';
+  }
+
+  // Testing questions
+  if (q.includes('test')) {
+    return 'Yes, please include unit tests for the new functionality.';
+  }
+
+  // API questions
+  if (q.includes('api') || q.includes('endpoint')) {
+    return 'Yes, implement RESTful API endpoints following best practices.';
+  }
+
+  // Database questions
+  if (q.includes('database') || q.includes('storage')) {
+    return 'Use appropriate data storage that fits the project requirements.';
+  }
+
+  // Default response encouraging continuation
+  return 'Yes, please proceed with your suggested approach.';
+}
+
+/**
+ * Detects simple Copilot-like questions and answers with pre-programmed logic.
+ * Extend with LLM calls or GitHub Copilot API later.
+ */
+export function detectCopilotPrompt(lineText: string): string | null {
+  if (lineText.includes('?') || lineText.toLowerCase().includes('should i')) {
+    return generateContextualResponse(lineText, '');
+  }
+  return null;
+}
+
+/**
+ * Starts a task by sending the task name to GitHub Copilot Chat.
+ * Simple implementation focused only on sending the task to Copilot.
+ */
+export async function startTaskFlow(
+  taskName: string,
+  outputChannel: vscode.OutputChannel
+): Promise<boolean> {
+  // Check if sendMessage command is available
+  const commands = await vscode.commands.getCommands(true);
+  const hasSendApi = commands.includes('github.copilot.chat.sendMessage');
+  
+  // Simple prompt with just the task name
+  const finalPrompt = `I want to start working on this task: "${taskName}". Please help me implement it.`;
+  // Try multiple approaches to open Copilot Chat and send the message
+  try {
+    // Try opening Copilot Chat using workbench.action.chat.open which is the most reliable method
+    try {
+      await vscode.commands.executeCommand('workbench.action.chat.open', finalPrompt);
+      outputChannel.appendLine(`Opened chat with workbench.action.chat.open and sent: ${taskName}`);
+      return true;
+    } catch (err) {
+      outputChannel.appendLine(`workbench.action.chat.open failed: ${err}`);
+    }
+    
+    // Try with explicit focus and send
+    try {
+      await vscode.commands.executeCommand('github.copilot.chat.focus');
+      await vscode.commands.executeCommand('github.copilot.chat.sendMessage', finalPrompt);
+      outputChannel.appendLine(`Sent task via focus+sendMessage: ${taskName}`);
+      return true;
+    } catch (err) {
+      outputChannel.appendLine(`focus+sendMessage failed: ${err}`);
+    }
+    
+    // Last resort: try to focus and use keystrokes
+    await vscode.commands.executeCommand('github.copilot.chat.focus');
+    // Wait for the view to be ready
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Send keystrokes and submit
+    await sendKeysToActive(finalPrompt);
+    await submitActiveInput();
+    outputChannel.appendLine(`Sent task via keystrokes: ${taskName}`);
+    return true;
+  } catch (err) {
+    outputChannel.appendLine(`All methods failed when sending task: ${err}`);
+    vscode.window.showErrorMessage(
+        `Failed to send Start Task: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`
+      );
+      return false;
+    }
+  }
+}
