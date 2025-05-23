@@ -1,14 +1,20 @@
 import argparse
 import json
 import os
-import sys
 import re
+import sys
+from datetime import datetime
 
 if sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
+# Debug mode flag
+DEBUG_MODE = os.environ.get('ARCANO_DEBUG', '0') == '1'
+DEBUG_LEVEL = os.environ.get('ARCANO_DEBUG_LEVEL', 'normal')
+
 # Dummy task list for demonstration
 arcano_tasks = [
+    {"task": "Automated Debug System (Highest Priority)", "done": False},
     {"task": "Develop advanced deck sharing & privacy features", "done": False},
     {"task": "Implement lazy loading for media assets", "done": False},
     {"task": "Reduce API response times through optimization", "done": False},
@@ -20,73 +26,72 @@ arcano_tasks = [
     {"task": "Explore additional AI model integrations", "done": False}
 ]
 
+def debug_log(message, level='normal'):
+    """Log debug messages when in debug mode"""
+    if DEBUG_MODE and (DEBUG_LEVEL == 'verbose' or level == 'normal'):
+        print(f"🐛 DEBUG: {message}", flush=True)
+
 def load_tasks_from_any_json_or_md():
+    debug_log("Looking for task files...")
     docs_path = os.path.join(os.getcwd(), 'docs')
     # Scan all .json files in docs
     if os.path.exists(docs_path):
-        for fname in os.listdir(docs_path):
-            if fname.endswith('.json'):
-                json_path = os.path.join(docs_path, fname)
-                try:
-                    with open(json_path, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        if isinstance(data, list) and all(isinstance(t, dict) and 'task' in t and 'done' in t for t in data):
-                            return data
-                except Exception as e:
-                    print(f"⚠️ Failed to load {fname}: {e}")
+        json_files = [f for f in os.listdir(docs_path) if f.endswith('.json')]
+        debug_log(f"Found JSON files: {json_files}")
+        
+        for json_file in json_files:
+            file_path = os.path.join(docs_path, json_file)
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list) and all('task' in item for item in data):
+                        debug_log(f"Loaded tasks from {json_file}")
+                        return data
+            except Exception as e:
+                debug_log(f"Error reading {json_file}: {e}", level='verbose')
+        
     # Try sprint.md or todo.md as fallback
     for md_file in [os.path.join(docs_path, 'sprint.md'), os.path.join(docs_path, 'todo.md')]:
         if os.path.exists(md_file):
             try:
                 with open(md_file, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                tasks = []
-                current_section = None
-                
-                for line in lines:
-                    line = line.strip()
-                    
-                    # Check for section headers (### Header)
-                    if line.startswith('###'):
-                        current_section = line.lstrip('#').strip()
-                        # Add a section marker to the tasks list
-                        tasks.append({"type": "section", "name": current_section})
-                        continue
-                        
-                    # Check for task items
-                    if line.startswith('- [ ]') or line.startswith('- [x]'):
-                        done = line.startswith('- [x]')
-                        label = line[5:].strip()
-                        tasks.append({
-                            "type": "task",
-                            "task": label,
-                            "done": done,
-                            "section": current_section
-                        })
-                        
-                if tasks:
-                    return tasks
+                    content = f.read()
+                    tasks = []
+                    for line in content.splitlines():
+                        match = re.search(r'- \[([ x])\] (.*)', line)
+                        if match:
+                            done = match.group(1) == 'x'
+                            task_text = match.group(2)
+                            tasks.append({"task": task_text, "done": done})
+                    if tasks:
+                        debug_log(f"Loaded tasks from {md_file}")
+                        return tasks
             except Exception as e:
-                print(f"⚠️ Failed to load {md_file}: {e}")
+                debug_log(f"Error reading {md_file}: {e}", level='verbose')
+    
+    debug_log("No task files found, using default tasks")
     return None
 
 def save_tasks_to_json(tasks):
+    debug_log("Saving tasks to JSON")
     docs_path = os.path.join(os.getcwd(), 'docs')
     os.makedirs(docs_path, exist_ok=True)
     json_path = os.path.join(docs_path, 'sprint.json')
     try:
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(tasks, f, indent=2)
+        debug_log(f"Tasks saved to {json_path}")
+        return True
     except Exception as e:
-        print(f"⚠️ Failed to save sprint.json: {e}")
+        debug_log(f"Error saving tasks: {e}", level='verbose')
+        return False
 
 def list_sprint_files():
     docs_path = os.path.join(os.getcwd(), 'docs')
     files = []
     if os.path.exists(docs_path):
-        for fname in os.listdir(docs_path):
-            if fname.endswith('.json') or fname.endswith('.md'):
-                files.append(fname)
+        files = [f for f in os.listdir(docs_path) if f.endswith('.json') or f.endswith('.md')]
+        debug_log(f"Found sprint files: {files}")
     print(json.dumps(files))
 
 # Try to load tasks from any .json, or sprint.md/todo.md if they exist
@@ -95,38 +100,53 @@ if loaded_tasks is not None:
     arcano_tasks = loaded_tasks
 
 def start_task(task_name):
+    debug_log(f"Starting task: {task_name}")
     matched = False
     for task in arcano_tasks:
-        if task["task"].strip().lower() == task_name.strip().lower():
-            print(f"▶️ Starting task: {task['task']}")
+        if task['task'] == task_name:
+            task['done'] = False
+            task['started_at'] = datetime.now().isoformat()
             matched = True
+            print(f"▶️ Started task: {task_name}")
+            save_tasks_to_json(arcano_tasks)
             break
+    
     if not matched:
         print(f"❌ Task not found: {task_name}")
 
 def run_sprint(sprint_name):
+    debug_log(f"Running sprint: {sprint_name}")
     print(f"\n▶️ Running {sprint_name}...")
     changed = False
     for task in arcano_tasks:
-        if sprint_name.lower() in task["task"].lower():
-            if not task["done"]:
-                task["done"] = True
-                changed = True
-            print(f"✅ {task['task']}")
+        if not task['done']:
+            print(f"⏳ Working on: {task['task']}")
+            # In debug mode, add details about the task
+            if DEBUG_MODE:
+                print(f"   - Status: {'✓ Done' if task['done'] else '⏳ In progress'}")
+                if 'started_at' in task:
+                    print(f"   - Started: {task['started_at']}")
+            changed = True
+    
     if changed:
         save_tasks_to_json(arcano_tasks)
+    
     print("\nSprint complete.")
 
 def mark_task_done(task_name):
-    # Convert to use toggle_task_status
+    debug_log(f"Marking task as done: {task_name}")
     for task in arcano_tasks:
-        if task["task"].strip().lower() == task_name.strip().lower():
-            if not task["done"]:
-                toggle_task_status(task_name)
+        if task['task'] == task_name:
+            task['done'] = True
+            task['completed_at'] = datetime.now().isoformat()
+            print(f"✅ Task completed: {task_name}")
+            save_tasks_to_json(arcano_tasks)
             return
+    
     print(f"❌ Task not found: {task_name}")
 
 def show_status():
+    debug_log("Showing sprint status")
     completed = [t for t in arcano_tasks if t['done']]
     pending = [t for t in arcano_tasks if not t['done']]
 
@@ -134,13 +154,25 @@ def show_status():
     print(f"✅ Completed: {len(completed)}")
     print(f"🕐 Pending: {len(pending)}")
 
+    # In debug mode, add more details
+    if DEBUG_MODE:
+        print("\n==== DETAILED STATUS ====")
+    
     for task in arcano_tasks:
-        status = "[x]" if task["done"] else "[ ]"
-        print(f" {status} {task['task']}")
+        status = "✅" if task['done'] else "⏳"
+        details = ""
+        if DEBUG_MODE and 'started_at' in task:
+            details += f" (Started: {task['started_at']})"
+        if DEBUG_MODE and task['done'] and 'completed_at' in task:
+            details += f" (Completed: {task['completed_at']})"
+        
+        print(f"{status} {task['task']}{details}")
 
 def update_markdown_task(file_path, task_text, new_status):
     """Update a task's status in a markdown file."""
+    debug_log(f"Updating task status in {file_path}: {task_text} -> {new_status}")
     if not os.path.exists(file_path):
+        debug_log(f"File not found: {file_path}")
         return False
         
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -153,131 +185,194 @@ def update_markdown_task(file_path, task_text, new_status):
     # This pattern will match the task regardless of indentation or section
     pattern = r'(\r?\n|\A)(\s*)- \[([ x])\] ' + escaped_task + r'(\r?\n|\Z)'
     
-    # Create the replacement with the same indentation and line endings
-    def replace_match(match):
-        line_start = match.group(1)  # \n, \r\n, or empty if at start
-        indentation = match.group(2)  # Spaces/tabs
-        line_end = match.group(4)     # \n, \r\n, or empty if at end
-        return f"{line_start}{indentation}- [{'x' if new_status else ' '}] {task_text}{line_end}"
-        
-    new_content = re.sub(pattern, replace_match, content)
+    # Replace with new status
+    mark = 'x' if new_status else ' '
+    replacement = r'\1\2- [' + mark + r'] ' + task_text + r'\4'
     
-    if new_content != content:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(new_content)
-        return True
-    return False
+    updated_content = re.sub(pattern, replacement, content)
+    
+    if content == updated_content:
+        debug_log(f"Task not found in {file_path}")
+        return False
+    
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(updated_content)
+    
+    debug_log(f"Task updated in {file_path}")
+    return True
 
 def toggle_task_status(task_name):
-    """Toggle a task's done status."""
-    matched = False
-    task_to_toggle = None
-    
-    # First find the task and get its current status
+    debug_log(f"Toggling task status: {task_name}")
     for task in arcano_tasks:
-        if task.get("type", "task") == "task" and task["task"].strip().lower() == task_name.strip().lower():
-            task_to_toggle = task
-            matched = True
-            break
+        if task['task'] == task_name:
+            task['done'] = not task['done']
+            if task['done']:
+                task['completed_at'] = datetime.now().isoformat()
+                print(f"✅ Task completed: {task_name}")
+            else:
+                task['started_at'] = datetime.now().isoformat()
+                print(f"▶️ Task reopened: {task_name}")
+            save_tasks_to_json(arcano_tasks)
             
-    if not matched:
-        print(f"❌ Task not found: {task_name}")
-        return
-        
-    # Toggle the status
-    new_status = not task_to_toggle["done"]
-    task_to_toggle["done"] = new_status
+            # Try to update any markdown files as well
+            docs_path = os.path.join(os.getcwd(), 'docs')
+            if os.path.exists(docs_path):
+                for md_file in ['sprint.md', 'todo.md']:
+                    md_path = os.path.join(docs_path, md_file)
+                    if os.path.exists(md_path):
+                        update_markdown_task(md_path, task_name, task['done'])
+            return
     
-    # Update both JSON and MD files
-    save_tasks_to_json(arcano_tasks)
-    
-    # Try to update markdown files
-    docs_path = os.path.join(os.getcwd(), 'docs')
-    md_files = ['sprint.md', 'todo.md']
-    updated_md = False
-    
-    for md_file in md_files:
-        file_path = os.path.join(docs_path, md_file)
-        if update_markdown_task(file_path, task_name, new_status):
-            updated_md = True
-            print(f"✔️ Updated task status in {md_file}")
+    print(f"❌ Task not found: {task_name}")
+
+def debug_task_details(task_name):
+    """Show detailed debug information for a specific task"""
+    debug_log(f"Getting debug details for task: {task_name}")
+    for task in arcano_tasks:
+        if task['task'] == task_name:
+            print(f"\n🔍 DEBUG DETAILS FOR TASK: {task_name}")
+            print(f"Status: {'✅ Done' if task['done'] else '⏳ In progress'}")
             
-    if not updated_md:
-        print("⚠️ Could not find task in markdown files")
-        
-    print(f"{'✔️' if new_status else '↩️'} Task {'marked as done' if new_status else 'unmarked'}: {task_name}")
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--sprint', type=str, help='Sprint name to run')
-    parser.add_argument('--done', type=str, help='Exact task name to mark as done')
-    parser.add_argument('--start', type=str, help='Record starting a specific task')
-    parser.add_argument('--status', action='store_true', help='Show current task status')
-    parser.add_argument('--list-files', action='store_true', help='List available sprint/task files')
-    parser.add_argument('--file', type=str, help='Specify a sprint/task file to load')
-    parser.add_argument('--toggle', type=str, help='Toggle done status of a task')
-    args = parser.parse_args()
-
-    if args.list_files:
-        list_sprint_files()
-    elif args.file:
-        # Load tasks from the specified file
-        docs_path = os.path.join(os.getcwd(), 'docs')
-        file_path = os.path.join(docs_path, args.file)
-        tasks = None
-        if args.file.endswith('.json'):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        tasks = data
-            except Exception as e:
-                print(f"⚠️ Failed to load {args.file}: {e}", file=sys.stderr)
-        elif args.file.endswith('.md'):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                tasks = []
-                current_section = None
+            # Print all task properties
+            for key, value in task.items():
+                if key != 'task':
+                    print(f"{key}: {value}")
+            
+            # Check for related files
+            docs_path = os.path.join(os.getcwd(), 'docs')
+            if os.path.exists(docs_path):
+                related_files = []
+                for file in os.listdir(docs_path):
+                    file_path = os.path.join(docs_path, file)
+                    if os.path.isfile(file_path):
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                                if task_name in content:
+                                    related_files.append(file)
+                        except Exception as e:
+                            debug_log(f"Error reading file {file}: {e}", level='verbose')
+                            pass
                 
-                for line in lines:
-                    line = line.strip()
-                    
-                    # Check for section headers (### Header)
-                    if line.startswith('###'):
-                        current_section = line.lstrip('#').strip()
-                        # Add a section marker to the tasks list
-                        tasks.append({"type": "section", "name": current_section})
+                if related_files:
+                    print(f"Related files: {', '.join(related_files)}")
+            return
+    
+    print(f"❌ Task not found: {task_name}")
+
+def load_tasks_from_file(file_path):
+    """Load tasks from a specific file and return them as a JSON-compatible object."""
+    debug_log(f"Loading tasks from file: {file_path}")
+    
+    if not os.path.exists(file_path):
+        debug_log(f"File not found: {file_path}")
+        return []
+    
+    tasks = []
+    
+    if file_path.lower().endswith('.json'):
+        # Load from JSON
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, list) and all('task' in item for item in data):
+                    debug_log(f"Loaded tasks from JSON: {file_path}")
+                    return data
+        except Exception as e:
+            debug_log(f"Error reading JSON {file_path}: {e}", level='verbose')
+    
+    elif file_path.lower().endswith('.md'):
+        # Load from Markdown
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+                # Parse each line for tasks
+                current_section = "General"
+                sections = [{"type": "section", "name": current_section}]
+                
+                for line in content.splitlines():
+                    # Check for section headers (Markdown headers)
+                    section_match = re.match(r'^#+\s+(.+)$', line)
+                    if section_match:
+                        current_section = section_match.group(1).strip()
+                        sections.append({"type": "section", "name": current_section})
                         continue
-                        
-                    # Check for task items
-                    if line.startswith('- [ ]') or line.startswith('- [x]'):
-                        done = line.startswith('- [x]')
-                        label = line[5:].strip()
+                    
+                    # Check for tasks
+                    task_match = re.search(r'- \[([ x])\] (.*)', line)
+                    if task_match:
+                        done = task_match.group(1) == 'x'
+                        task_text = task_match.group(2).strip()
                         tasks.append({
                             "type": "task",
-                            "task": label,
+                            "task": task_text,
                             "done": done,
                             "section": current_section
                         })
-            except Exception as e:
-                print(f"⚠️ Failed to load {args.file}: {e}", file=sys.stderr)
-        if tasks is not None:
-            print(json.dumps(tasks, ensure_ascii=False))
-        else:
-            print(f"⚠️ No valid tasks found in {args.file}", file=sys.stderr)
-    elif args.sprint:
-        run_sprint(args.sprint)
+                
+                # Merge sections and tasks
+                debug_log(f"Loaded {len(tasks)} tasks from Markdown: {file_path}")
+                return sections + tasks
+        except Exception as e:
+            debug_log(f"Error reading Markdown {file_path}: {e}", level='verbose')
+    
+    debug_log(f"Failed to load tasks from {file_path}")
+    return []
+
+def main():
+    parser = argparse.ArgumentParser(description='Arcano Sprint Manager')
+    parser.add_argument('--start', help='Start a task')
+    parser.add_argument('--done', help='Mark a task as done')
+    parser.add_argument('--toggle', help='Toggle task status')
+    parser.add_argument('--status', action='store_true', help='Show sprint status')
+    parser.add_argument('--run', help='Run a sprint')
+    parser.add_argument('--list-files', action='store_true', help='List available sprint files')
+    parser.add_argument('--debug-task', help='Show detailed debug information for a task')
+    parser.add_argument('--file', help='Load tasks from a specific file and output as JSON')
+    
+    args = parser.parse_args()
+    
+    if args.start:
+        start_task(args.start)
     elif args.done:
         mark_task_done(args.done)
     elif args.toggle:
         toggle_task_status(args.toggle)
-    elif args.start:
-        start_task(args.start)
     elif args.status:
         show_status()
+    elif args.run:
+        run_sprint(args.run)
+    elif args.list_files:
+        list_sprint_files()
+    elif args.debug_task:
+        debug_task_details(args.debug_task)
+    elif args.file:
+        # When called with --file, load tasks from the specified file and output as JSON
+        docs_path = os.path.join(os.getcwd(), 'docs')
+        file_path = os.path.join(docs_path, args.file)
+        if os.path.exists(file_path):
+            tasks = load_tasks_from_file(file_path)
+            print(json.dumps(tasks))
+        else:
+            debug_log(f"File not found: {file_path}")
+            print("[]")  # Return empty array on error to avoid breaking the UI
     else:
-        print("❓ No valid command provided. Use --sprint, --start, --done, --toggle, --status, --list-files, or --file.")
+        parser.print_help()
 
 if __name__ == '__main__':
-    main()
+    if DEBUG_MODE:
+        print("🐛 DEBUG MODE ENABLED")
+        if DEBUG_LEVEL == 'verbose':
+            print("🔍 VERBOSE LOGGING ENABLED")
+    
+    try:
+        main()
+    except Exception as e:
+        if DEBUG_MODE:
+            import traceback
+            print(f"❌ ERROR: {e}")
+            print("Stack trace:")
+            traceback.print_exc()
+        else:
+            print(f"❌ ERROR: {e}")

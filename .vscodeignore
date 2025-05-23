@@ -1,0 +1,56 @@
+# Development-related files
+.vscode/**
+.vscode-test/**
+out/test/**
+src/**
+tests/**
+.gitignore
+.yarnrc
+**/tsconfig.json
+**/*.map
+**/.eslintrc.json
+**/*.ts
+!src/types.ts
+
+# Backup and history files
+**/*.bak
+**/*.backup
+**/*.bkup
+**/*.broken
+**/*.ts.new
+
+# Scripts not needed for production
+scripts/**
+!scripts/sprint_manager.py
+
+# Documentation and tests not needed for distribution
+docs/**
+!docs/sprint.md
+.github/**
+test/**
+
+# Already packaged versions
+*.vsix
+
+# Node modules (if applicable - use npm prune --production before packaging)
+node_modules/**
+!node_modules/@vscode/
+
+# Misc 
+.DS_Store
+thumbs.db
+*.log
+.git/
+.idea/
+.ssh/**
+**/.ssh/**
+
+# Security-sensitive files
+.ssh/**
+**/*.pem
+**/*.key
+**/*id_rsa*
+**/*id_ed25519*
+**/*id_dsa*
+**/*.ppk
+**/known_hosts

@@ -1,12 +1,15 @@
 {
     "version": "2.0.0",
     "tasks": [
-      {
-        "label": "npm: vscode:prepublish",
-        "type": "npm",
-        "script": "vscode:prepublish",
-        "problemMatcher": []
-      }
+        {
+            "type": "npm",
+            "script": "compile",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "label": "npm: compile",
+            "detail": "Compiles the TypeScript files into JavaScript."
+        }
     ]
-  }
-  
+}

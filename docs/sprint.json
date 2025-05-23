@@ -1,0 +1,27 @@
+[
+  {
+    "task": "Automated Debug System (Highest Priority)",
+    "done": false,
+    "description": "Implement an automated debugging system that provides detailed information about tasks and assists with development workflows."
+  },
+  {
+    "task": "Develop advanced deck sharing & privacy features",
+    "done": false,
+    "description": "Create functionality for sharing decks with specific privacy settings and permissions."
+  },
+  {
+    "task": "Implement lazy loading for media assets",
+    "done": true,
+    "description": "Optimize performance by implementing lazy loading for images and other media assets."
+  },
+  {
+    "task": "Reduce API response times through optimization",
+    "done": false,
+    "description": "Improve API performance by optimizing queries and caching."
+  },
+  {
+    "task": "Enhance accessibility features",
+    "done": false,
+    "description": "Make the application more accessible by implementing ARIA attributes and keyboard navigation."
+  }
+]

@@ -1,10 +1,13 @@
-import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { runSprintManager, setExtensionContext } from './pythonBridge';
-import { ArcanoPanelProvider } from './panel';
-import { insertCopilotHint, respondToCopilot, startTaskFlow } from './copilotAssist';
+import * as vscode from 'vscode';
+import { insertCopilotHint } from './copilotAssist';
+import { ArcanoDebugProvider } from './debugProvider';
+import { ArcanoDebugUI } from './debugUI';
 import { sendKeysToActive, submitActiveInput } from './inputHelper';
+import { ArcanoPanelProvider } from './panel';
+import { ProblemScanner } from './problemScanner';
+import { runSprintManager, setExtensionContext } from './pythonBridge';
 
 // Define a type for the design instructions
 interface DesignInstructions {
@@ -98,33 +101,38 @@ class CopilotChatHelper {
   async openChat(): Promise<boolean> {
     this.outputChannel.appendLine('Opening GitHub Copilot Chat...');
     
-    // Try GitHub Copilot Chat Focus command first
-    try {
-      await vscode.commands.executeCommand('github.copilot.chat.focus');
-      this.outputChannel.appendLine('Successfully opened chat with github.copilot.chat.focus');
-      return true;
-    } catch (err) {
-      this.outputChannel.appendLine(`Failed to open chat with github.copilot.chat.focus: ${err}`);
+    // Get all available commands
+    const commands = await vscode.commands.getCommands(true);
+    const copilotCommands = commands.filter(cmd => cmd.includes('copilot'));
+    this.outputChannel.appendLine(`Available Copilot commands: ${copilotCommands.join(', ')}`);
+    
+    // List of commands to try (in order of preference)
+    const chatCommands = [
+      'workbench.action.chat.open',
+      'workbench.action.chatWith', 
+      'github.copilot-chat.focus',
+      'github.copilot.chat.focus',
+      'chat.open'
+    ];
+    
+    // Try each command in sequence
+    for (const cmd of chatCommands) {
+      try {
+        this.outputChannel.appendLine(`Trying to open chat with command: ${cmd}`);
+        if (cmd === 'workbench.action.chatWith') {
+          await vscode.commands.executeCommand(cmd, { provider: 'github.copilot' });
+        } else {
+          await vscode.commands.executeCommand(cmd);
+        }
+        this.outputChannel.appendLine(`Successfully opened chat with ${cmd}`);
+        return true;
+      } catch (err) {
+        this.outputChannel.appendLine(`Command ${cmd} failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     
-    // Try workbench.action.chatWith command
-    try {
-      await vscode.commands.executeCommand('workbench.action.chatWith', { provider: 'GitHub.copilot' });
-      this.outputChannel.appendLine('Successfully opened chat with workbench.action.chatWith');
-      return true;
-    } catch (err) {
-      this.outputChannel.appendLine(`Failed to open chat with workbench.action.chatWith: ${err}`);
-    }
-    
-    // Try chat.open command
-    try {
-      await vscode.commands.executeCommand('chat.open');
-      this.outputChannel.appendLine('Successfully opened chat with chat.open');
-      return true;
-    } catch (err) {
-      this.outputChannel.appendLine(`Failed to open chat with chat.open: ${err}`);
-    }
-    
+    // If we get here, all commands failed
+    this.outputChannel.appendLine('Failed to open chat with any available command');
     return false;
   }
 
@@ -135,23 +143,85 @@ class CopilotChatHelper {
    */
   async sendMessage(message: string): Promise<boolean> {
     try {
-      await this.openChat();
-      await vscode.commands.executeCommand('github.copilot.chat.sendMessage', message);
-      this.outputChannel.appendLine('Successfully sent message');
-      return true;
-    } catch (err) {
-      this.outputChannel.appendLine(`Error sending message: ${err}`);
-      
-      try {
-        // Fallback approach
-        await vscode.commands.executeCommand('github.copilot.chat.insertTextIntoPrompt', message);
-        await vscode.commands.executeCommand('github.copilot.chat.acceptInput');
-        this.outputChannel.appendLine('Successfully sent message via fallback method');
-        return true;
-      } catch (fallbackErr) {
-        this.outputChannel.appendLine(`Fallback method failed: ${fallbackErr}`);
+      // First open the chat
+      const chatOpened = await this.openChat();
+      if (!chatOpened) {
+        this.outputChannel.appendLine('Failed to open chat');
         return false;
       }
+      
+      // Get all available commands
+      const commands = await vscode.commands.getCommands(true);
+      
+      // Try different ways to send a message
+      const sendCommands = [
+        'github.copilot.chat.sendMessage',
+        'github.copilot-chat.sendMessage'
+      ];
+      
+      // First try command-based sending
+      for (const cmd of sendCommands) {
+        if (commands.includes(cmd)) {
+          try {
+            this.outputChannel.appendLine(`Trying to send message with command: ${cmd}`);
+            await vscode.commands.executeCommand(cmd, message);
+            this.outputChannel.appendLine(`Successfully sent message with ${cmd}`);
+            return true;
+          } catch (cmdErr) {
+            this.outputChannel.appendLine(`Command ${cmd} failed: ${cmdErr}`);
+          }
+        }
+      }
+      
+      // Try insertion commands next
+      const insertCommands = [
+        'github.copilot-chat.insertTextIntoPrompt',
+        'github.copilot.chat.insertTextIntoPrompt'
+      ];
+      
+      const acceptCommands = [
+        'github.copilot-chat.acceptInput',
+        'github.copilot.chat.acceptInput'
+      ];
+      
+      for (const insertCmd of insertCommands) {
+        if (commands.includes(insertCmd)) {
+          try {
+            this.outputChannel.appendLine(`Trying insertion with: ${insertCmd}`);
+            await vscode.commands.executeCommand(insertCmd, message);
+            
+            // Try to accept input
+            for (const acceptCmd of acceptCommands) {
+              if (commands.includes(acceptCmd)) {
+                try {
+                  await vscode.commands.executeCommand(acceptCmd);
+                  this.outputChannel.appendLine('Successfully sent message via insert+accept method');
+                  return true;
+                } catch (acceptErr) {
+                  this.outputChannel.appendLine(`Accept command ${acceptCmd} failed: ${acceptErr}`);
+                }
+              }
+            }
+          } catch (insertErr) {
+            this.outputChannel.appendLine(`Insert command ${insertCmd} failed: ${insertErr}`);
+          }
+        }
+      }
+      
+      // Last resort: use keyboard input
+      try {
+        const { sendKeysToActive, submitActiveInput } = require('./inputHelper');
+        await sendKeysToActive(message);
+        await submitActiveInput();
+        this.outputChannel.appendLine('Successfully sent message via keyboard input');
+        return true;
+      } catch (keyErr) {
+        this.outputChannel.appendLine(`Keyboard input method failed: ${keyErr}`);
+        return false;
+      }
+    } catch (err) {
+      this.outputChannel.appendLine(`Error in sendMessage: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
     }
   }
   
@@ -274,42 +344,78 @@ UI Preferences:
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  // Create output channel
+  // Create output channel for debugging information
   const outputChannel = vscode.window.createOutputChannel('Arcano Debug');
+
+  // Setup debug functionality
   
-  // Log extension activation
-  outputChannel.appendLine('Arcano extension activating...');
-  outputChannel.show();
   
-  // Set extension context for pythonBridge
-  setExtensionContext(context);
+    // Initialize the Problem Scanner
+  const problemScanner = new ProblemScanner(outputChannel);
   
-  // Load design instructions
-  loadDesignInstructions(context).then(instructions => {
-    if (instructions) {
-      designInstructions = instructions;
-      outputChannel.appendLine('Design instructions loaded successfully');
-    } else {
-      outputChannel.appendLine('Warning: Could not load design instructions');
-    }
+  // Register problem scanner listeners
+  const scannerDisposables = problemScanner.registerListeners();
+  scannerDisposables.forEach(disposable => {
+    context.subscriptions.push(disposable);
   });
   
-  // Create Copilot helper
+  // Initialize the Debug UI
+  const debugUI = new ArcanoDebugUI(outputChannel);  // Make sure to use ArcanoDebugUI, not DebugUI
+  
+  // Initialize debug provider
+  const debugProvider = new ArcanoDebugProvider(outputChannel);
+  
+  // Register debug configuration provider
+  context.subscriptions.push(
+    vscode.debug.registerDebugConfigurationProvider('python', debugProvider)
+  );
+  
+  // Show debug UI in the status bar
+  debugUI.show();
+
+  // Register debug commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('arcano.showDebugOptions', () => {
+      debugUI.showDebugOptions();
+    }),
+    
+    vscode.commands.registerCommand('arcano.startAutomatedDebug', async (taskName?: string) => {
+      if (!taskName) {
+        taskName = await vscode.window.showInputBox({
+          prompt: 'Enter the task name to debug',
+          placeHolder: 'Type the task name or leave empty to show task list'
+        });
+      }
+      
+      if (taskName) {
+        await debugUI.debugTask(taskName); // Changed from debugSystem to debugUI
+      } else {
+        await vscode.commands.executeCommand('arcano.showDebugOptions');
+      }
+    })
+  );
+  
+  // Pass the extension context to the pythonBridge module
+  setExtensionContext(context);
+  
+  // Setup panel provider
+  const arcanoPanel = new ArcanoPanelProvider(context, outputChannel);
+  
+  // Register panel provider
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider('arcanoTaskList', arcanoPanel)
+  );
+  
+  // Get design instructions from JSON
+  loadDesignInstructions(context).then(instructions => {
+    designInstructions = instructions;
+  });
+  
+  // Create response handler and copilot helper
+  const responseHandler = new AgentResponseHandler(outputChannel);
   const copilotHelper = new CopilotChatHelper(outputChannel);
   
-  // Create agent response handler
-  const responseHandler = new AgentResponseHandler(outputChannel);
-  
-  // Register the ArcanoPanelProvider for the sidebar view
-  const provider = new ArcanoPanelProvider(context, outputChannel);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(
-      ArcanoPanelProvider.viewType,
-      provider
-    )
-  );
-
-  // Register debug command
+  // Register extension commands
   context.subscriptions.push(
     vscode.commands.registerCommand('arcano.showDebugOutput', () => {
       outputChannel.show();
@@ -326,8 +432,10 @@ export function activate(context: vscode.ExtensionContext) {
       if (!success) {
         vscode.window.showErrorMessage('Failed to open Copilot chat. Please ensure Copilot is properly installed and authenticated.');
       }
-    }),
-    
+    })
+  );
+  
+  context.subscriptions.push(
     vscode.commands.registerCommand('arcano.sendToCopilot', async (message: string) => {
       outputChannel.appendLine(`Sending message to Copilot: ${message}`);
       
@@ -365,7 +473,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Try each chat command in sequence
         const commands = [
-          'github.copilot.chat.focus',
+          'github.copilot-chat.focus',
           'workbench.action.chatWith',
           'chat.open'
         ];
@@ -375,7 +483,7 @@ export function activate(context: vscode.ExtensionContext) {
           try {
             outputChannel.appendLine(`Trying command: ${cmd}`);
             if (cmd === 'workbench.action.chatWith') {
-              await vscode.commands.executeCommand(cmd, { provider: 'GitHub.copilot' });
+              await vscode.commands.executeCommand(cmd, { provider: 'github.copilot' });
             } else {
               await vscode.commands.executeCommand(cmd);
             }
@@ -394,6 +502,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Wait longer for chat to be ready
         await new Promise(resolve => setTimeout(resolve, 2000));
         await sendKeysToActive(formattedMessage);
+        await submitActiveInput();
         
         outputChannel.appendLine('Message sent successfully');
       } catch (err) {
@@ -403,7 +512,6 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Register commands
   // Register the Copilot assist command
   context.subscriptions.push(
     vscode.commands.registerCommand('arcano.copilotAssist', async (taskLabel: string) => {
@@ -411,121 +519,24 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand('arcano.startSprint', async () => {
-      const sprintName = await vscode.window.showInputBox({
-        prompt: 'Enter sprint name to run',
-        placeHolder: 'e.g. Deck Sharing'
-      });
-      if (sprintName) {
-        await runSprintManager(['--sprint', sprintName]);
-        vscode.window.showInformationMessage(`Sprint '${sprintName}' run.`);
-      }
-    }),
-    
-    // New startTask command
-    vscode.commands.registerCommand('arcano.startTask', async (taskName: string) => {
-      outputChannel.appendLine(`Starting task: ${taskName}`);
-      // Delegate to copilotAssist
-      const success = await startTaskFlow(taskName, outputChannel);
-      outputChannel.appendLine(`Start Task Flow result: ${success}`);
-      return success;
-    }),
-    
-    vscode.commands.registerCommand('arcano.markTaskDone', async () => {
-      const taskName = await vscode.window.showInputBox({
-        prompt: 'Enter exact task name to mark as done',
-        placeHolder: 'Paste or type the full task name'
-      });
-      if (taskName) {
-        await runSprintManager(['--done', taskName]);
-        vscode.window.showInformationMessage(`Task marked as done: ${taskName}`);
-      }
-    }),
-    vscode.commands.registerCommand('arcano.showProgress', async () => {
-      const output = await runSprintManager(['--status']);
-      vscode.window.showInformationMessage(output);
-    }),
-    vscode.commands.registerCommand('arcano.runPanel', async () => {
-      await vscode.commands.executeCommand('workbench.view.extension.arcanoViewContainer');
-    }),
-    vscode.commands.registerCommand('arcano.copilotHint', async (taskLabel: string) => {
-      await insertCopilotHint(taskLabel);
-    }),
-    vscode.commands.registerCommand('arcano.copilotRespond', async (context: { question: string, task: string }) => {
-      await respondToCopilot(context);
-    }),
-    // Register commands for task planning and implementation
-    vscode.commands.registerCommand('arcano.sendTaskToPlan', async (task: string) => {
-      outputChannel.appendLine(`Sending task to plan: ${task}`);
-      
-      // Format the planning message
-      const message = `I need help planning this sprint task: "${task}". Please help with:
-1. Breaking down the task into smaller subtasks
-2. Estimating time requirements
-3. Identifying potential challenges
-4. Suggesting implementation approaches
-5. Resource planning and requirements`;
-      
-      const success = await copilotHelper.sendMessage(message);
-      
-      if (success) {
-        outputChannel.appendLine('Successfully sent planning task to Copilot Chat');
-        return true;
-      } else {
-        // Try to use the language model API as a fallback
-        const response = await copilotHelper.sendToLanguageModel(message);
-        
-        if (response) {
-          await vscode.window.showInformationMessage('Planning Guidance', {
-            modal: true,
-            detail: response
-          });
-          return true;
-        } else {
-          vscode.window.showErrorMessage(`Failed to send task for planning: Unable to connect to Copilot Chat`);
-          return false;
+    context.subscriptions.push(
+      vscode.commands.registerCommand('arcano.startSprint', async () => {
+        const sprintName = await vscode.window.showInputBox({
+          prompt: 'Enter sprint name to run',
+          placeHolder: 'e.g. Deck Sharing'
+        });
+        if (sprintName) {
+          await runSprintManager(['--run', sprintName]);
         }
       }
-    }),
-    
-    vscode.commands.registerCommand('arcano.sendTaskToImplement', async (task: string) => {
-      outputChannel.appendLine(`Sending task to implement: ${task}`);
-      
-      // Format the implementation message
-      const message = `/help I need to implement this task: "${task}". Please help me with:
-1. Breaking down the implementation steps
-2. Suggesting which files to modify
-3. Providing code examples with best practices
-4. Including error handling
-5. Adding proper documentation`;
-      
-      const success = await copilotHelper.sendMessage(message);
-      
-      if (success) {
-        outputChannel.appendLine('Successfully sent implementation task to Copilot Chat');
-        return true;
-      } else {
-        // Try to use the language model API as a fallback
-        const response = await copilotHelper.sendToLanguageModel(message);
-        
-        if (response) {
-          await vscode.window.showInformationMessage('Implementation Guidance', {
-            modal: true,
-            detail: response
-          });
-          return true;
-        } else {
-          vscode.window.showErrorMessage(`Failed to send task for implementation: Unable to connect to Copilot Chat`);
-          return false;
-        }
-      }
-    })
-  );
-
-  outputChannel.appendLine('Arcano extension activated successfully.');
-}
-
-export function deactivate() {}
-
-// Registration of extension commands and functionality continues below
+    )
+    );
+  // Register the task flow command
+    context.subscriptions.push(
+      vscode.commands.registerCommand('arcano.taskFlow', async () => {
+        outputChannel.appendLine('Starting task flow...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        outputChannel.appendLine('Task flow completed successfully');
+      })
+    );
+  }

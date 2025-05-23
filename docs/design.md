@@ -2,24 +2,38 @@
 
 ## UI Design Preferences
 
-### Task Button Styling
-The preferred styling for task buttons maintains a clean, modern look with the following characteristics:
-- Base style:
-  ```css
-  .task-button {
-    background: var(--electric-blue);
-    color: var(--dark-bg);
-    border: none;
-    padding: 6px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.3s ease;
-  }
-  ```
+.task-button {
+  background: var(--electric-blue);
+  color: var(--dark-bg);
+  border: none;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 2px;
+  line-height: 1.2;
+  cursor: pointer;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  transition: background 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease;
+  user-select: none;
+}
+.task-button[disabled] {
+  background: #666;
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+:root {
+  --electric-blue: #00c3ff;
+  --silver-white: #e3eafc;
+  --dark-bg: #0f2027;
+  --blue-glow: #00c3ff44;
+}
 
 - Hover effects:
   ```css
