@@ -8,6 +8,7 @@ export interface Task {
 export interface Section {
     type: 'section';
     name: string;
+    isHeader?: boolean;
 }
 
 export type SprintItem = Task | Section;

@@ -5,8 +5,9 @@ import re
 import sys
 from datetime import datetime
 
-if sys.stdout.encoding.lower() != 'utf-8':
-    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stdout, "reconfigure"):
+    if sys.stdout.encoding.lower() != "utf-8":
+        sys.stdout.reconfigure(encoding="utf-8") # type: ignore
 
 # Debug mode flag
 DEBUG_MODE = os.environ.get('ARCANO_DEBUG', '0') == '1'
@@ -287,37 +288,44 @@ def load_tasks_from_file(file_path):
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
-                # Parse each line for tasks
-                current_section = "General"
-                sections = [{"type": "section", "name": current_section}]
+            current_section = None
+            
+            for line in content.split('\n'):
+                line = line.strip()
                 
-                for line in content.splitlines():
-                    # Check for section headers (Markdown headers)
-                    section_match = re.match(r'^#+\s+(.+)$', line)
-                    if section_match:
-                        current_section = section_match.group(1).strip()
-                        sections.append({"type": "section", "name": current_section})
-                        continue
+                # Check for section headers (both ## and ###)
+                section_match = re.match(r'^(##|###)\s+(.+)', line)
+                if section_match:
+                    current_section = section_match.group(2).strip()
+                    header_level = section_match.group(1)
+                    # Add section with flag indicating if it's a header (##) or task group (###)
+                    tasks.append({
+                        "type": "section",
+                        "name": current_section,
+                        "isHeader": header_level == "##"  # True for ##, False for ###
+                    })
+                    continue
+                
+                # Check for task items
+                task_match = re.match(r'^-\s*\[([ x])\]\s*(.+)', line)
+                if task_match:
+                    is_done = task_match.group(1).lower() == 'x'
+                    task_text = task_match.group(2).strip()
                     
-                    # Check for tasks
-                    task_match = re.search(r'- \[([ x])\] (.*)', line)
-                    if task_match:
-                        done = task_match.group(1) == 'x'
-                        task_text = task_match.group(2).strip()
-                        tasks.append({
-                            "type": "task",
-                            "task": task_text,
-                            "done": done,
-                            "section": current_section
-                        })
-                
-                # Merge sections and tasks
-                debug_log(f"Loaded {len(tasks)} tasks from Markdown: {file_path}")
-                return sections + tasks
+                    tasks.append({
+                        "type": "task",
+                        "task": task_text,
+                        "done": is_done,
+                        "section": current_section
+                    })
+                    
+            debug_log(f"Loaded {len(tasks)} items from Markdown: {file_path}")
+            return tasks
+            
         except Exception as e:
             debug_log(f"Error reading Markdown {file_path}: {e}", level='verbose')
     
-    debug_log(f"Failed to load tasks from {file_path}")
+    debug_log(f"No valid tasks found in: {file_path}")
     return []
 
 def main():

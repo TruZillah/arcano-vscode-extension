@@ -17,13 +17,9 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
     private readonly context: vscode.ExtensionContext,
     private readonly outputChannel: vscode.OutputChannel
   ) {
-    const saved = this.context.globalState.get<{ [sec: string]: boolean }>(
-      'arcano.collapsedSections'
-    );
+    const saved = this.context.globalState.get<{ [sec: string]: boolean }>('arcano.collapsedSections');
     if (saved) {
-      Object.entries(saved).forEach(([sec, val]) =>
-        this.collapsedSections.set(sec, val)
-      );
+      Object.entries(saved).forEach(([sec, val]) => this.collapsedSections.set(sec, val));
     }
   }
 
@@ -40,21 +36,18 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
         case 'selectFile':
           this.currentFile = message.file;
           await this.refreshPanel();
-          return;
-
+          break;
         case 'toggleSection':
           this.toggleSectionState(message.section);
           await this.refreshPanel();
-          return;
-
+          break;
         case 'toggleTask':
           this.lastToggledTaskIndex = message.index;
           await this.handleTaskToggle(message.index);
-          return;
-
+          break;
         case 'startTask':
           await this.handleStartTask(message.index);
-          return;
+          break;
       }
     });
 
@@ -70,13 +63,15 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
     console.log('Available sprint files:', files);
     if (!this.currentFile && files.length) {
       this.currentFile = files[0];
-    }
-
-    const items: SprintItem[] = this.currentFile
+    }    const items: SprintItem[] = this.currentFile
       ? await loadTasksFromFile(this.currentFile)
       : [];
 
     console.log('Loaded items:', items);
+    
+    // Debug log sections with their isHeader property
+    const sections = items.filter(item => item.type === 'section');
+    console.log('Sections with isHeader property:', sections);
 
     const allTasks = items.filter((i) => i.type === 'task') as Task[];
     const doneCount = allTasks.filter((t) => t.done).length;
@@ -148,92 +143,122 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
     this.webviewView?.webview.postMessage({ command: 'animateStart', index });
   }
 
-  private getHtml(
-    fileOptionsHtml: string,
-    items: SprintItem[],
-    done: number,
-    total: number
-  ): string {
-    const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+  private getHtml(fileOptionsHtml: string, items: (Task | Section)[], doneCount: number, totalCount: number): string {
+    // Use generated sectioned tasks HTML and show a summary header.
+    const sectionTasksHtml = this.generateSectionedTasksHtml(items);
+    const percent = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />  <style>
-    /* Arcano CSS variables */
-    :root {
-      --electric-blue: #00c3ff;
-      --silver-white: #e3eafc;
-      --dark-bg: #0f2027;
-      --blue-glow: #00c3ff44;
-      --card-bg: rgba(255, 255, 255, 0.06);
-      --hover-bg: rgba(255, 255, 255, 0.1);
-    }
-
+  <meta charset="UTF-8" />
+  <style>
+    /* Basic styling for the panel */
     body {
-      background: var(--dark-bg);
-      background-image: linear-gradient(145deg, #0f2027 0%, #162236 100%);
-      color: var(--silver-white);
+      background: #0f2027;
+      color: #e3eafc;
       font-family: var(--vscode-font-family);
       padding: 16px;
-      min-height: 100vh;
       margin: 0;
     }
-    
     h2 {
-      margin-top: 0;
-      margin-bottom: 20px;
       display: flex;
       align-items: center;
-      gap: 0.5em;
-      color: var(--electric-blue);
-      text-shadow: 0 0 15px var(--blue-glow);
+      color: #00c3ff;
       font-size: 1.4rem;
       font-weight: 600;
-      letter-spacing: 0.5px;
     }
-    
-    label[for="fileSelect"] {
-      display: block;
-      margin-bottom: 6px;
-      font-size: 0.9rem;
-      opacity: 0.8;
-    }
-    
     select {
       width: 100%;
-      padding: 8px 10px;
+      padding: 8px;
+      margin-bottom: 16px;
       border-radius: 4px;
       background-color: rgba(0,0,0,0.2);
-      color: var(--silver-white);
       border: 1px solid rgba(255,255,255,0.1);
-      margin-bottom: 16px;
-      outline: none;
-      transition: all 0.2s ease;
+      color:rgb(227, 249, 255);
+    }
+    .progress {
+      margin-top: 20px;
+      margin-bottom: 24px;
+    }
+    .progress-text {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+      opacity: 0.9;
+    }
+    .progress-bar-container {
+      height: 6px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #00c3ff 0%, rgba(0,195,255,0.7) 100%);
+      border-radius: 4px;
+      transition: width 0.5s ease;
+      box-shadow: 0 0 8px #00c3ff44;
+    }    /* Blog post style section headers */
+    .blog-header-section {
+      margin: 2rem 0 1.5rem 0;
+      padding: 0;
+      border: none;
+      background: transparent;
+    }
+    .blog-header-section h3 {
+      font-size: 1.8rem !important;
+      font-weight: 700 !important;
+      color: #00c3ff !important;
+      margin: 0;
+      padding-bottom: 0.5rem;
+      border-bottom: 3px solid rgba(0, 195, 255, 0.3);
+      position: relative;
+    }
+    .blog-header-section h3::after {
+      content: '';
+      position: absolute;
+      bottom: -3px;
+      left: 0;
+      width: 60px;
+      height: 3px;
+      background: #00c3ff;
+      border-radius: 2px;
+    }
+      /* Tasks under header sections */
+    .header-section-tasks {
+      margin-bottom: 2rem;
+      padding: 0 0 0 1rem;
     }
     
-    select:focus, select:hover {
-      border-color: var(--electric-blue);
-      box-shadow: 0 0 0 2px var(--blue-glow);
+    /* Tasks under header sections */
+    .header-section-tasks .task-item {
+      margin-bottom: 8px;
+      transition: transform 0.2s ease;
     }
     
-    .tasks {
-      margin-top: 16px;
-    }
-
-    .task-section {
+    .header-section-tasks .task-item:hover {
+      transform: translateX(5px);
+    }    /* Task group sections with collapsible functionality */
+    .task-group-section {
       margin: 1.2em 0;
       border-radius: 6px;
       overflow: hidden;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
       border: 1px solid rgba(0,195,255,0.1);
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
-    
-    .task-section:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4), 0 0 0 1px rgba(0,195,255,0.2);
+    /* Empty sections styling */
+    .empty-section .section-header {
+      background: rgba(0, 195, 255, 0.05);
+      cursor: default;
+    }    .empty-section .section-header:hover {
+      background: rgba(0, 195, 255, 0.05);
     }
-    
+    .empty-task-message {
+      padding: 8px 12px;
+      font-style: italic;
+      color: rgba(227, 234, 252, 0.5);
+      text-align: center;
+      font-size: 0.85rem;
+    }
     .section-header {
       display: flex;
       align-items: center;
@@ -241,44 +266,28 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
       cursor: pointer;
       padding: 10px 16px;
       background: rgba(0, 195, 255, 0.1);
-      backdrop-filter: blur(5px);
-      border-bottom: 1px solid rgba(0,195,255,0.15);
-      transition: background 0.2s ease;
     }
-    
     .section-header:hover {
       background: rgba(0, 195, 255, 0.15);
     }
-      .section-header span {
-      color: var(--electric-blue);
+    .section-header span {
       font-size: 12px;
       margin-right: 8px;
-      transition: transform 0.3s ease;
     }
-    
     .section-header strong {
-      font-weight: 500;
       font-size: 0.95rem;
-      letter-spacing: 0.5px;
       text-transform: uppercase;
-      color: var(--electric-blue);
+      color: #00c3ff;
     }
-    
     .section-header .section-count {
       font-size: 0.85rem;
-      color: var(--silver-white);
       opacity: 0.7;
-      margin-left: auto;
-      padding-left: 8px;
     }
-    
     .section-body {
-      transition: all .3s ease;
-      overflow: hidden;
-      background: var(--card-bg);
+      background: rgba(255,255,255,0.06);
       padding: 8px;
+      transition: all 0.3s ease;
     }
-    
     .task-item {
       display: flex;
       align-items: center;
@@ -287,108 +296,24 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
       margin-bottom: 4px;
       border-radius: 4px;
       background: rgba(0,0,0,0.2);
-      transition: background 0.2s ease, transform 0.2s ease;
-      border: 1px solid transparent;
-    }
-    
-    .task-item:hover {
-      background: var(--hover-bg);
-      border-color: rgba(0,195,255,0.1);
-      transform: translateX(2px);
-    }
-    
-    .task-item label {
-      display: flex;
-      align-items: center;
-      flex: 1;
-      min-width: 0;
       cursor: pointer;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      margin-right: 8px;
     }
-    
-    .task-item input[type="checkbox"] {
-      margin-right: 8px;
-      accent-color: var(--electric-blue);
-    }
-    
     .task-item.done label {
       opacity: 0.6;
       text-decoration: line-through;
-      color: rgba(227, 234, 252, 0.6);
     }
-
+    .task-item label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .start-btn {
-      background: var(--electric-blue);
-      color: var(--dark-bg);
+      background: #00c3ff;
       border: none;
       padding: 6px 10px;
       border-radius: 4px;
-      font-weight: 600;
       cursor: pointer;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 32px;
-      transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    }
-    
-    .start-btn:hover:not([disabled]) {
-      transform: scale(1.05);
-      box-shadow: 0 0 10px var(--blue-glow);
-    }
-    
-    .start-btn:active:not([disabled]) {
-      transform: scale(0.98);
-    }
-    
-    .start-btn:disabled {
-      background: #666;
-      opacity: 0.4;
-      cursor: not-allowed;
-      box-shadow: none;
-    }
-      .start-btn.starting {
-      animation: glow 0.6s ease-in-out;
-    }
-    
-    @keyframes glow {
-      from { box-shadow: 0 0 0px var(--blue-glow); }
-      50% { box-shadow: 0 0 15px var(--blue-glow); }
-      to { box-shadow: 0 0 5px var(--blue-glow); }
-    }
-    
-    .progress {
-      margin-top: 20px;
-      margin-bottom: 24px;
-    }
-    
-    .progress-text {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 8px;
-      font-size: 0.9rem;
-      color: var(--silver-white);
-      opacity: 0.9;
-    }
-    
-    .progress-bar-container {
-      height: 6px;
-      background: rgba(255,255,255,0.1);
-      border-radius: 4px;
-      overflow: hidden;
-    }
-    
-    .progress-bar {
-      height: 100%;
-      background: linear-gradient(90deg, var(--electric-blue) 0%, rgba(0,195,255,0.7) 100%);
-      border-radius: 4px;
-      transition: width 0.5s ease;
-      box-shadow: 0 0 8px var(--blue-glow);
     }
   </style>
 </head>
@@ -399,22 +324,21 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
     <select id="fileSelect" onchange="selectFile(this.value)">
       ${fileOptionsHtml}
     </select>
-  </div>  <div class="progress">
+  </div>
+  <div class="progress">
     <div class="progress-text">
       <span>Sprint Progress</span>
-      <span>${done}/${total} (${percent}%)</span>
+      <span>${doneCount}/${totalCount} (${percent}%)</span>
     </div>
     <div class="progress-bar-container">
       <div class="progress-bar" style="width: ${percent}%"></div>
     </div>
   </div>
   <div class="tasks">
-    ${this.generateSectionedTasksHtml(items)}
+    ${sectionTasksHtml}
   </div>
-
   <script>
     const vscode = acquireVsCodeApi();
-
     function selectFile(file) {
       vscode.postMessage({ command: 'selectFile', file });
     }
@@ -427,7 +351,6 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
     function startTask(index) {
       vscode.postMessage({ command: 'startTask', index });
     }
-
     window.addEventListener('message', event => {
       const msg = event.data;
       if (msg.command === 'scrollToTask') {
@@ -449,61 +372,105 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
 
   private generateSectionedTasksHtml(items: SprintItem[]): string {
     let html = '';
-    const sections = items
-      .filter((i) => i.type === 'section')
-      .map((s) => (s as Section).name);
+    // Get unique sections, including tasks without a section (using "Start Sprint" as default)
+    const sections: { [key: string]: Task[] } = {};
+    const sectionOrder: string[] = [];
+    const sectionTypes: { [key: string]: string } = {}; // Store section type: 'header' or 'group'
+    
+    // Process section types first
+    for (const item of items) {      if (item.type === 'section') {
+        // Check if this is a header section (from ## headers) or task group (from ### headers)
+        const section = item as Section;
+        const isHeader = section.isHeader === true;
+        if (!(item.name in sections)) {
+          sections[item.name] = [];
+          sectionOrder.push(item.name);
+          sectionTypes[item.name] = isHeader ? 'header' : 'group';
+        }
+      }
+    }
+    
+    // Then process tasks
+    for (const item of items) {
+      if (item.type === 'task') {
+        const sectionName = item.section || 'Start Sprint';
+        if (!(sectionName in sections)) {
+          sections[sectionName] = [];
+          sectionOrder.push(sectionName);
+          // Default to task group if not previously defined
+          if (!sectionTypes[sectionName]) {
+            sectionTypes[sectionName] = 'group';
+          }
+        }
+        sections[sectionName].push(item as Task);
+      }
+    }
 
-    sections.forEach((section) => {
-      const collapsed = this.collapsedSections.get(section) || false;
-      const sectionTasks = items
-        .filter((i) => i.type === 'task' && (i as Task).section === section)
-        .map((t) => t as Task);      const doneCount = sectionTasks.filter(t => t.done).length;
+    // Build HTML for each section
+    for (const sectionName of sectionOrder) {
+      const sectionTasks = sections[sectionName];
+      const isHeaderSection = sectionTypes[sectionName] === 'header';
       
-      html += `
-        <div class="task-section">
-          <div class="section-header" onclick="toggleSection('${this.escapeHtml(
-            section
-          )}')">
-            <span>${collapsed ? '▶' : '▼'}</span>
-            <strong>${this.escapeHtml(section)}</strong>
-            <span class="section-count">${doneCount}/${sectionTasks.length}</span>
-          </div>
-          <div class="section-body" style="display:${
-            collapsed ? 'none' : 'block'
-          }">
-            ${sectionTasks
-              .map((task, i) => {
-                const idx = this.getGlobalTaskIndex(items, section, i);
-                return `
-                  <div class="task-item ${
-                    task.done ? 'done' : ''
-                  }" data-index="${idx}">
+    // For header sections (##), use blog-style headers
+      if (isHeaderSection) {
+        // Use blog-header-section instead of blog-section-header
+        html += `<div class="blog-header-section">
+          <h3>${this.escapeHtml(sectionName)}</h3>
+        </div>`;
+        
+        // If header section has tasks, still list them but without collapsible functionality
+        if (sectionTasks.length > 0) {
+          html += `<div class="header-section-tasks">`;
+          html += sectionTasks
+            .map((task, i) => {
+              const idx = this.getGlobalTaskIndex(items, sectionName, i);
+              return `<div class="task-item ${task.done ? 'done' : ''}" data-index="${idx}">
                     <label>
-                      <input type="checkbox" ${
-                        task.done ? 'checked' : ''
-                      } onchange="toggleTask(${idx})">
+                      <input type="checkbox" ${task.done ? 'checked' : ''} onchange="toggleTask(${idx})">
                       ${this.escapeHtml(task.task)}
                     </label>
-                    <button
-                      class="start-btn"
-                      onclick="startTask(${idx})"
-                      ${task.done ? 'disabled' : ''}
-                    >🚀</button>
+                    <button class="start-btn" onclick="startTask(${idx})" ${task.done ? 'disabled' : ''}>🚀</button>
                   </div>`;
-              })
-              .join('')}
+            })
+            .join('');
+          html += `</div>`;
+        }
+        continue;
+      }
+        // For task groups (###), use collapsible sections
+      const collapsed = this.collapsedSections.get(sectionName) || false;
+      const doneCount = sectionTasks.filter(task => task.done).length;      html += `<div class="task-group-section ${sectionTasks.length === 0 ? 'empty-section' : ''}">
+          <div class="section-header" onclick="${sectionTasks.length > 0 ? `toggleSection('${this.escapeHtml(sectionName)}')` : ''}">
+            ${sectionTasks.length > 0 ? `<span>${collapsed ? '▶' : '▼'}</span>` : ''}
+            <strong>${this.escapeHtml(sectionName)}</strong>
+            ${sectionTasks.length > 0 ? `<span class="section-count">${doneCount}/${sectionTasks.length}</span>` : ''}
           </div>
-        </div>`;
-    });
-
+          <div class="section-body" style="display: ${collapsed ? 'none' : 'block'};">`;
+      
+      if (!collapsed && sectionTasks.length > 0) {
+        html += sectionTasks
+          .map((task, i) => {
+            const idx = this.getGlobalTaskIndex(items, sectionName, i);
+            return `<div class="task-item ${task.done ? 'done' : ''}" data-index="${idx}">
+                    <label>
+                      <input type="checkbox" ${task.done ? 'checked' : ''} onchange="toggleTask(${idx})">
+                      ${this.escapeHtml(task.task)}
+                    </label>
+                    <button class="start-btn" onclick="startTask(${idx})" ${task.done ? 'disabled' : ''}>🚀</button>
+                  </div>`;
+          })
+          .join('');
+      }      // For empty sections, we can show a message or just close the containers
+      if (sectionTasks.length === 0) {
+        html += `<div class="empty-task-message">No tasks in this group</div></div></div>`;
+      } else {
+        html += `</div></div>`;
+      }
+    }
     return html;
   }
 
-  private getGlobalTaskIndex(
-    items: SprintItem[],
-    section: string,
-    localIdx: number
-  ): number {
+  private getGlobalTaskIndex(items: SprintItem[], section: string, localIdx: number): number {
     const allTasks = items.filter((i) => i.type === 'task') as Task[];
     let count = -1;
     for (let idx = 0; idx < allTasks.length; idx++) {
@@ -517,10 +484,7 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
     return localIdx;
   }
 
-  private async updateTaskInFile(
-    taskText: string,
-    newStatus: boolean
-  ): Promise<boolean> {
+  private async updateTaskInFile(taskText: string, newStatus: boolean): Promise<boolean> {
     if (!this.currentFile) {
       return false;
     }
@@ -528,11 +492,7 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
     if (!folders) {
       return false;
     }
-    const filePath = vscode.Uri.joinPath(
-      folders[0].uri,
-      'docs',
-      this.currentFile
-    );
+    const filePath = vscode.Uri.joinPath(folders[0].uri, 'docs', this.currentFile);
     try {
       const doc = await vscode.workspace.openTextDocument(filePath);
       const edit = new vscode.WorkspaceEdit();
@@ -563,7 +523,7 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
 
   private escapeHtml(str: string): string {
     return str.replace(/[&<>"']/g, (m) =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m] ?? m)
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m] || m)
     );
   }
 
@@ -571,9 +531,7 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
     return files
       .map(
         (f) =>
-          `<option value="${this.escapeHtml(f)}"${
-            f === this.currentFile ? ' selected' : ''
-          }>${this.escapeHtml(f)}</option>`
+          `<option value="${this.escapeHtml(f)}"${f === this.currentFile ? ' selected' : ''}>${this.escapeHtml(f)}</option>`
       )
       .join('');
   }
@@ -584,8 +542,6 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
 
   private async openTaskInCopilotChat(taskText: string) {
     const prompt = this.getTaskStartPrompt(taskText);
-    const output = this.outputChannel;
-
     try {
       await vscode.commands.executeCommand('workbench.action.chat.open', {
         query: prompt,
@@ -593,14 +549,12 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
       });
       return;
     } catch {}
-
     try {
       await vscode.commands.executeCommand('chat.open');
       await vscode.commands.executeCommand('chat.insertInput', prompt);
       await vscode.commands.executeCommand('chat.acceptInput');
       return;
     } catch {}
-
     try {
       const doc = await vscode.workspace.openTextDocument({
         content: `# ${taskText}\n\n${prompt}`,
@@ -610,14 +564,13 @@ export class ArcanoPanelProvider implements vscode.WebviewViewProvider {
       await vscode.commands.executeCommand('inlineChat.start');
       return;
     } catch {}
-
     vscode.window.showWarningMessage(
       '⚠️ Couldn’t invoke Copilot Chat automatically. The prompt has been copied to the Output panel.'
     );
-    output.show(true);
-    output.appendLine('');
-    output.appendLine('--- Copilot Task Prompt ---');
-    output.appendLine(prompt);
-    output.appendLine('------');
+    this.outputChannel.show(true);
+    this.outputChannel.appendLine('');
+    this.outputChannel.appendLine('--- Copilot Task Prompt ---');
+    this.outputChannel.appendLine(prompt);
+    this.outputChannel.appendLine('------');
   }
 }

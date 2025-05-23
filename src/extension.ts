@@ -6,6 +6,7 @@ import { ArcanoDebugProvider } from './debugProvider';
 import { ArcanoDebugUI } from './debugUI';
 import { sendKeysToActive, submitActiveInput } from './inputHelper';
 import { ArcanoPanelProvider } from './panel';
+import { NewArcanoPanelProvider } from './newPanel';
 import { ProblemScanner } from './problemScanner';
 import { runSprintManager, setExtensionContext } from './pythonBridge';
 
@@ -399,11 +400,12 @@ export function activate(context: vscode.ExtensionContext) {
   setExtensionContext(context);
   
   // Setup panel provider
-  const arcanoPanel = new ArcanoPanelProvider(context, outputChannel);
+  // Use new panel implementation that properly handles section types
+  const arcanoPanel = new NewArcanoPanelProvider(context, outputChannel);
   
   // Register panel provider
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('arcanoTaskList', arcanoPanel)
+    vscode.window.registerWebviewViewProvider(NewArcanoPanelProvider.viewType, arcanoPanel)
   );
   
   // Get design instructions from JSON
